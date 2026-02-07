@@ -1,0 +1,33 @@
+menu "INMP441 Recorder Configuration"
+
+    config I2S_BCK_GPIO
+        int "I2S BCK (Bit Clock) GPIO"
+        default 26
+        help
+            GPIO number for I2S bit clock (connect to INMP441 SCK pin).
+
+    config I2S_WS_GPIO
+        int "I2S WS (Word Select/LRCK) GPIO"
+        default 25
+        help
+            GPIO number for I2S word select (connect to INMP441 WS pin).
+
+    config I2S_DIN_GPIO
+        int "I2S DIN (Data In) GPIO"
+        default 22
+        help
+            GPIO number for I2S data input (connect to INMP441 SD pin).
+
+    config SAMPLE_RATE
+        int "Sample Rate (Hz)"
+        default 16000
+        help
+            Audio sample rate. Common values: 8000, 16000, 44100.
+
+    config RECORD_SECONDS
+        int "Recording Duration (seconds)"
+        default 5
+        help
+            How many seconds to record.
+
+endmenu
