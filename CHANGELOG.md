@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [feature01a] - 2026-02-09
+
+### Added
+- **Continuous Collection Mode**: New loop-based recording logic for dataset gathering.
+- **Sequential Saving**: Server now saves files as `sample1.wav`, `sample2.wav`, etc.
+- **Dataset Support**: Specifically designed for Edge Impulse keyword training.
+
+### Removed
+- **VAD Logic**: Removed RMS threshold check to allow continuous background recording.
+- **Auto-Calibration**: Removed boot-up calibration as it's not needed for raw collection.
+
 ## [feature01] - 2026-02-09 (Current Milestone)
 
 ### Added

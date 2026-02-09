@@ -2,18 +2,26 @@ from flask import Flask, request
 import os
 import datetime
 import subprocess
+import threading
 
 app = Flask(__name__)
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+# Counter for feature01a dataset collection
+sample_count = 1
+count_lock = threading.Lock()
+
 
 @app.route("/upload", methods=["POST"])
 def upload_file():
+    global sample_count
     print(f"Received request from {request.remote_addr}")
 
-    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    filename = f"rec_{timestamp}.wav"
+    with count_lock:
+        filename = f"sample{sample_count}.wav"
+        sample_count += 1
+
     filepath = os.path.join(UPLOAD_FOLDER, filename)
 
     # Save the raw audio data
@@ -23,13 +31,13 @@ def upload_file():
 
     print(f" Saved: {filepath} ({len(data)} bytes)")
 
-    # Play the audio (Linux ALSA) - Optional, for debugging
+    # Play the audio (Optional)
     try:
         subprocess.run(["aplay", filepath], check=False)
     except Exception as e:
-        print(f"Could not play audio: {e}")
+        pass
 
-    return "Upload Successful", 200
+    return f"Saved as {filename}", 200
 
 
 if __name__ == "__main__":

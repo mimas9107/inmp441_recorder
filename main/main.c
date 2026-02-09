@@ -1,5 +1,6 @@
 /*
- * INMP441 I2S Recorder with Auto-Calibration VAD and WiFi Upload
+ * INMP441 I2S Recorder - Continuous Collection Mode (feature01a)
+ * Used for dataset collection (sample1.wav, sample2.wav...)
  */
 
 #include <stdio.h>
@@ -21,7 +22,7 @@
 #include "esp_event.h"
 #include "esp_http_client.h"
 
-static const char *TAG = "RECORDER";
+static const char *TAG = "COLLECTOR";
 
 /* Config from Kconfig */
 #define WIFI_SSID       CONFIG_WIFI_SSID
@@ -39,15 +40,12 @@ static const char *TAG = "RECORDER";
 #define DMA_BUF_COUNT   4
 #define DMA_BUF_LEN     256
 
-/* VAD & Calibration Configuration */
-#define VAD_FRAME_SIZE      512  // Samples per frame (32ms)
-#define CALIBRATION_SEC     10   // Warm-up time in seconds (User requested ~9s)
-#define VAD_MARGIN          500  // Threshold = NoiseFloor + Margin
+/* Collection Configuration */
 #define RECORD_TIME_SEC     CONFIG_RECORD_SECONDS
+#define PAUSE_BETWEEN_SEC   1  // Seconds to wait between samples
 
 /* Globals */
 static bool wifi_connected = false;
-static int vad_threshold = 1000; // Default, will be updated by calibration
 
 /* WAV header */
 typedef struct __attribute__((packed)) {
@@ -131,14 +129,11 @@ static void init_wifi(void)
         .sta = {
             .ssid = WIFI_SSID,
             .password = WIFI_PASS,
-            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
         },
     };
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
-
-    ESP_LOGI(TAG, "WiFi Init done. Connecting to %s...", WIFI_SSID);
 }
 
 /* I2S Init */
@@ -171,7 +166,7 @@ static void init_i2s(void)
     ESP_ERROR_CHECK(i2s_zero_dma_buffer(I2S_PORT));
 }
 
-/* HTTP Upload Task */
+/* HTTP Upload */
 static void upload_audio_to_server(const uint8_t *data, size_t len)
 {
     if (!wifi_connected) {
@@ -179,174 +174,89 @@ static void upload_audio_to_server(const uint8_t *data, size_t len)
         return;
     }
 
-    ESP_LOGI(TAG, "Uploading %d bytes to %s...", len, SERVER_URL);
-
     esp_http_client_config_t config = {
         .url = SERVER_URL,
         .method = HTTP_METHOD_POST,
         .timeout_ms = 10000,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
-
-    // Set headers
     esp_http_client_set_header(client, "Content-Type", "audio/wav");
-    
-    // Set post data
     esp_http_client_set_post_field(client, (const char *)data, len);
 
-    // Perform request
     esp_err_t err = esp_http_client_perform(client);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Upload Status = %d, content_length = %lld",
-                esp_http_client_get_status_code(client),
-                esp_http_client_get_content_length(client));
-        // TODO: Read response (JSON command from server) here if needed
+        ESP_LOGI(TAG, "Upload Successful. Status = %d", esp_http_client_get_status_code(client));
     } else {
         ESP_LOGE(TAG, "Upload failed: %s", esp_err_to_name(err));
     }
-
     esp_http_client_cleanup(client);
 }
 
-/* RMS Calc */
-static float calculate_rms(int16_t *data, int samples)
-{
-    float sum = 0.0f;
-    for (int i = 0; i < samples; i++) {
-        float val = (float)data[i];
-        sum += val * val;
-    }
-    return sqrtf(sum / samples);
-}
-
-/* Main VAD Task */
-void vad_task(void *arg)
+/* Main Collection Task */
+void collection_task(void *arg)
 {
     size_t bytes_read;
-    int32_t *i2s_buff = malloc(VAD_FRAME_SIZE * 4 * sizeof(int32_t)); 
-    int16_t *vad_buff = malloc(VAD_FRAME_SIZE * sizeof(int16_t));   
+    int32_t *i2s_buff = malloc(DMA_BUF_LEN * 4 * sizeof(int32_t)); 
     
-    // Allocate RAM for recording
     size_t pcm_size = SAMPLE_RATE * 2 * RECORD_TIME_SEC;
     size_t header_size = sizeof(wav_header_t);
     size_t total_size = header_size + pcm_size;
     
     uint8_t *rec_buf = malloc(total_size);
-    if (!rec_buf || !i2s_buff || !vad_buff) {
+    if (!rec_buf || !i2s_buff) {
         ESP_LOGE(TAG, "Failed to allocate memory!");
         vTaskDelete(NULL);
     }
     
     int16_t *pcm_start = (int16_t *)(rec_buf + header_size);
+    int sample_index = 1;
 
-    // --- PHASE 1: CALIBRATION ---
-    ESP_LOGI(TAG, "Starting Calibration (%d seconds)... Please keep silent.", CALIBRATION_SEC);
-    
-    int calib_frames = (CALIBRATION_SEC * SAMPLE_RATE) / VAD_FRAME_SIZE;
-    float sum_rms = 0.0f;
-    int valid_frames = 0;
-
-    for (int i = 0; i < calib_frames; i++) {
-        i2s_read(I2S_PORT, i2s_buff, VAD_FRAME_SIZE * 4, &bytes_read, portMAX_DELAY);
-        int samples = bytes_read / 4;
-        
-        for (int j = 0; j < samples; j++) {
-            int32_t s = i2s_buff[j] >> 11;
-            vad_buff[j] = (int16_t)s;
-        }
-        
-        float rms = calculate_rms(vad_buff, samples);
-        sum_rms += rms;
-        valid_frames++;
-        
-        if (i % 50 == 0) {
-            ESP_LOGI(TAG, "Calibrating... Current RMS: %.1f", rms);
-        }
-    }
-
-    float noise_floor = sum_rms / valid_frames;
-    vad_threshold = (int)(noise_floor + VAD_MARGIN);
-    
-    ESP_LOGI(TAG, ">>> Calibration Done. Noise Floor: %.1f, Threshold set to: %d", noise_floor, vad_threshold);
-    
-    // Optional: Wait for WiFi if not connected yet
     while (!wifi_connected) {
         ESP_LOGW(TAG, "Waiting for WiFi...");
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
-    // --- PHASE 2: LISTENING ---
-    ESP_LOGI(TAG, "VAD Listening...");
+    ESP_LOGI(TAG, ">>> COLLECTION STARTED. RECORD_TIME: %d sec", RECORD_TIME_SEC);
 
     while (1) {
-        i2s_read(I2S_PORT, i2s_buff, VAD_FRAME_SIZE * 4, &bytes_read, portMAX_DELAY);
-        int samples = bytes_read / 4;
+        ESP_LOGI(TAG, ">>> Capturing Sample #%d...", sample_index);
         
-        for (int i = 0; i < samples; i++) {
-            int32_t s = i2s_buff[i] >> 11;
-            if (s > 32767) s = 32767;
-            if (s < -32768) s = -32768;
-            vad_buff[i] = (int16_t)s;
+        int16_t *pcm_ptr = pcm_start;
+        size_t recorded_samples = 0;
+        size_t target_samples = pcm_size / 2;
+        
+        while (recorded_samples < target_samples) {
+             i2s_read(I2S_PORT, i2s_buff, DMA_BUF_LEN * 4, &bytes_read, portMAX_DELAY);
+             int chunk_samples = bytes_read / 4;
+             
+             for (int i = 0; i < chunk_samples; i++) {
+                int32_t s = i2s_buff[i] >> 11;
+                if (s > 32767) s = 32767;
+                if (s < -32768) s = -32768;
+                if (recorded_samples < target_samples) {
+                    *pcm_ptr++ = (int16_t)s;
+                    recorded_samples++;
+                }
+             }
         }
         
-        float rms = calculate_rms(vad_buff, samples);
+        wav_header_t header = create_wav_header(pcm_size);
+        memcpy(rec_buf, &header, header_size);
         
-        if (rms > vad_threshold) {
-            ESP_LOGI(TAG, ">>> Triggered! (RMS: %.1f) Recording...", rms);
-            
-            // Start Recording
-            int16_t *pcm_ptr = pcm_start;
-            size_t recorded_samples = 0;
-            size_t target_samples = pcm_size / 2;
-            
-            // Pre-fill
-            memcpy(pcm_ptr, vad_buff, samples * 2);
-            pcm_ptr += samples;
-            recorded_samples += samples;
-            
-            // Record Loop
-            while (recorded_samples < target_samples) {
-                 i2s_read(I2S_PORT, i2s_buff, VAD_FRAME_SIZE * 4, &bytes_read, portMAX_DELAY);
-                 int chunk_samples = bytes_read / 4;
-                 
-                 for (int i = 0; i < chunk_samples; i++) {
-                    int32_t s = i2s_buff[i] >> 11;
-                    if (s > 32767) s = 32767;
-                    if (s < -32768) s = -32768;
-                    
-                    if (recorded_samples < target_samples) {
-                        *pcm_ptr++ = (int16_t)s;
-                        recorded_samples++;
-                    }
-                 }
-            }
-            
-            // Prepare Header & Upload
-            wav_header_t header = create_wav_header(pcm_size);
-            memcpy(rec_buf, &header, header_size);
-            
-            ESP_LOGI(TAG, "Recording Done. Uploading...");
-            upload_audio_to_server(rec_buf, total_size);
-            
-            // Cooldown
-            i2s_zero_dma_buffer(I2S_PORT);
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            ESP_LOGI(TAG, "Resuming VAD...");
-        }
+        ESP_LOGI(TAG, "Sample #%d captured. Uploading...", sample_index);
+        upload_audio_to_server(rec_buf, total_size);
         
-        vTaskDelay(pdMS_TO_TICKS(10));
+        ESP_LOGI(TAG, "Done. Next in %d sec...", PAUSE_BETWEEN_SEC);
+        sample_index++;
+        
+        vTaskDelay(pdMS_TO_TICKS(PAUSE_BETWEEN_SEC * 1000));
     }
 }
 
 void app_main(void)
 {
     esp_task_wdt_deinit();
-    
-    // Init WiFi first so it connects while calibrating
     init_wifi();
-    
     init_i2s();
-    
-    // Start VAD Task
-    xTaskCreate(vad_task, "vad", 4096, NULL, 5, NULL);
+    xTaskCreate(collection_task, "collect", 8192, NULL, 5, NULL);
 }

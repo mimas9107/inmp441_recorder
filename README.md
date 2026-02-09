@@ -4,7 +4,12 @@
 
 ## 分支說明 (Branch Information)
 
-*   **feature01 (當前穩定分支)**: 
+*   **feature01a (數據採集工具分支)**: 
+    *   基於 `feature01` 的穩定 WiFi 傳輸功能。
+    *   **移除 VAD 門檻**，改為連續循環錄音 (預設 3 秒，間隔 1 秒)。
+    *   伺服器端會將檔案依序存為 `sample1.wav`, `sample2.wav` ...。
+    *   專門用於收集音訊資料集，適合匯入 Edge Impulse 訓練模型。
+*   **feature01 (語音觸發分支)**: 
     *   採用輕量級 **RMS-based VAD** 偵測。
     *   具備 10 秒開機自動校正 (Auto-Calibration) 以適應環境底噪。
     *   偵測到語音後自動錄製 3 秒 (RAM Buffer)。
