@@ -8,6 +8,7 @@ dependencies.lock
 *.elf
 *.map
 *.hex
+*.wav
 
 # Runtime generated
 record.wav
