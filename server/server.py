@@ -78,6 +78,28 @@ HTML_TEMPLATE = """
     </div>
 
     <div class="card">
+        <h3>Statistics</h3>
+        <table style="width: 100%; border-collapse: collapse;">
+            <tr style="border-bottom: 2px solid #eee;">
+                <th style="text-align: left; padding: 8px;">Label</th>
+                <th style="text-align: right; padding: 8px;">Samples</th>
+            </tr>
+            {% for label, count in counts.items() %}
+            <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 8px;"><b>{{ label }}</b></td>
+                <td style="text-align: right; padding: 8px;">{{ count }}</td>
+            </tr>
+            {% endfor %}
+            {% if not counts %}
+            <tr><td colspan="2" style="text-align: center; padding: 10px; color: #999;">No data yet</td></tr>
+            {% endif %}
+        </table>
+        <form action="/reset_counts" method="POST" style="margin-top: 15px;">
+            <button class="btn btn-red" style="width: 100%; padding: 5px;" onclick="return confirm('Reset all counters?')">Reset Statistics</button>
+        </form>
+    </div>
+
+    <div class="card">
         <h3>Last 10 Samples</h3>
         {% for s in samples %}
         <div class="sample-item">
@@ -102,7 +124,15 @@ def index():
         samples=state["samples"][:10],
         esp_ip=state["esp_ip"],
         is_collecting=state["is_collecting"],
+        counts=state["counts"],
     )
+
+
+@app.route("/reset_counts", methods=["POST"])
+def reset_counts():
+    with state_lock:
+        state["counts"] = {}
+    return redirect(url_for("index"))
 
 
 @app.route("/register", methods=["POST"])
