@@ -28,8 +28,8 @@ static const char *TAG = "RECORDER";
 #define RECORD_SECONDS  CONFIG_RECORD_SECONDS
 
 #define I2S_PORT        I2S_NUM_0
-#define DMA_BUF_COUNT   8
-#define DMA_BUF_LEN     512
+#define DMA_BUF_COUNT   16   // Increased buffer count for stability
+#define DMA_BUF_LEN     1024 // Increased buffer length to reduce overhead
 
 #define BITS_PER_SAMPLE 16
 #define NUM_CHANNELS    1
@@ -96,14 +96,14 @@ static void init_i2s(void)
         .mode = I2S_MODE_MASTER | I2S_MODE_RX,
         .sample_rate = SAMPLE_RATE,
         .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
-        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-        .communication_format = I2S_COMM_FORMAT_I2S,
+        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT, // Back to Mono
+        .communication_format = I2S_COMM_FORMAT_STAND_I2S, // Use Standard I2S (Philips)
         .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
         .dma_buf_count = DMA_BUF_COUNT,
         .dma_buf_len = DMA_BUF_LEN,
-        .use_apll = false,
+        .use_apll = true,
         .tx_desc_auto_clear = false,
-        .fixed_mclk = 1,
+        .fixed_mclk = 0,
     };
 
     i2s_pin_config_t pin_cfg = {
@@ -130,7 +130,11 @@ static void record_audio(const char *filename)
     fwrite(&header, sizeof(header), 1, f);
 
     int32_t *i2s_buf = malloc(DMA_BUF_LEN * 4);
-    int16_t *pcm_buf = malloc(DMA_BUF_LEN * 2);
+    
+    // Increase PCM buffer for larger SPIFFS writes (4KB write is better)
+    size_t chunk_size = 4096;
+    int16_t *pcm_buf = malloc(chunk_size);
+    size_t pcm_buf_pos = 0;
 
     size_t bytes_written = 0;
     size_t bytes_read;
@@ -142,26 +146,29 @@ static void record_audio(const char *filename)
 
         int samples = bytes_read / 4;
         for (int i = 0; i < samples; i++) {
-            //pcm_buf[i] = (int16_t)(i2s_buf[i] >> 14);
-	    int32_t s = i2s_buf[i] >> 8;     // 24bit 對齊
-            s *= 1;                        // software gain
+            // INMP441 24-bit data in 32-bit slot (left aligned)
+            // Shift >> 11 to increase volume (was >> 14 which was too quiet)
+            // >> 8 was too loud (clipping)
+            int32_t s = i2s_buf[i] >> 11;
+            
             if (s > 32767) s = 32767;
             if (s < -32768) s = -32768;
-            pcm_buf[i] = (int16_t)s;
+            
+            pcm_buf[pcm_buf_pos++] = (int16_t)s;
 
+            // If buffer full, flush to SPIFFS
+            if (pcm_buf_pos * 2 >= chunk_size) {
+                 fwrite(pcm_buf, 1, pcm_buf_pos * 2, f);
+                 bytes_written += pcm_buf_pos * 2;
+                 pcm_buf_pos = 0;
+            }
         }
-	//static int once=0;
-	//if(!once){
-	//  ESP_LOGI(TAG, "raw=%ld pcm=%d", i2s_buf[0], pcm_buf[0]);
-	//  once=1;
-	//}
-
-        size_t pcm_bytes = samples * 2;
-        if (bytes_written + pcm_bytes > RECORD_SIZE)
-            pcm_bytes = RECORD_SIZE - bytes_written;
-
-        fwrite(pcm_buf, 1, pcm_bytes, f);
-        bytes_written += pcm_bytes;
+    }
+    
+    // Flush remaining
+    if (pcm_buf_pos > 0) {
+         fwrite(pcm_buf, 1, pcm_buf_pos * 2, f);
+         bytes_written += pcm_buf_pos * 2;
     }
 
     fclose(f);
