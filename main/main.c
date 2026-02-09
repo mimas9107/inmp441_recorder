@@ -1,11 +1,11 @@
 /*
- * INMP441 I2S Recorder with Simple VAD (RMS-based)
+ * INMP441 I2S Recorder with Auto-Calibration VAD and WiFi Upload
  */
 
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
-#include <stdbool.h> // Include this
+#include <stdbool.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/i2s.h"
@@ -15,23 +15,39 @@
 #include "esp_task_wdt.h"
 #include "sdkconfig.h"
 
+// WiFi & HTTP Includes
+#include "nvs_flash.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_http_client.h"
+
 static const char *TAG = "RECORDER";
 
-/* Pins from menuconfig */
-#define I2S_WS_GPIO   CONFIG_I2S_WS_GPIO
-#define I2S_DIN_GPIO  CONFIG_I2S_DIN_GPIO
-#define I2S_BCK_GPIO  CONFIG_I2S_BCK_GPIO
+/* Config from Kconfig */
+#define WIFI_SSID       CONFIG_WIFI_SSID
+#define WIFI_PASS       CONFIG_WIFI_PASSWORD
+#define SERVER_URL      CONFIG_SERVER_URL
 
+/* Pins */
+#define I2S_WS_GPIO     CONFIG_I2S_WS_GPIO
+#define I2S_DIN_GPIO    CONFIG_I2S_DIN_GPIO
+#define I2S_BCK_GPIO    CONFIG_I2S_BCK_GPIO
+
+/* Audio Constants */
 #define SAMPLE_RATE     16000
 #define I2S_PORT        I2S_NUM_0
-#define DMA_BUF_COUNT   8
-#define DMA_BUF_LEN     512
+#define DMA_BUF_COUNT   4
+#define DMA_BUF_LEN     256
 
-/* VAD Configuration */
-#define VAD_FRAME_SIZE      512  // Samples per frame
-#define VAD_THRESHOLD       1000 // RMS Threshold (Adjust based on noise floor)
-#define VAD_SILENCE_FRAMES  30   // How many silent frames to stop recording (approx 1 sec)
-#define RECORD_TIME_SEC     3    // Fixed recording time after trigger
+/* VAD & Calibration Configuration */
+#define VAD_FRAME_SIZE      512  // Samples per frame (32ms)
+#define CALIBRATION_SEC     10   // Warm-up time in seconds (User requested ~9s)
+#define VAD_MARGIN          500  // Threshold = NoiseFloor + Margin
+#define RECORD_TIME_SEC     CONFIG_RECORD_SECONDS
+
+/* Globals */
+static bool wifi_connected = false;
+static int vad_threshold = 1000; // Default, will be updated by calibration
 
 /* WAV header */
 typedef struct __attribute__((packed)) {
@@ -70,17 +86,70 @@ static wav_header_t create_wav_header(uint32_t data_size)
     return h;
 }
 
+/* WiFi Event Handler */
+static void wifi_event_handler(void* arg, esp_event_base_t event_base,
+                               int32_t event_id, void* event_data)
+{
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        ESP_LOGW(TAG, "WiFi Disconnected. Retrying...");
+        wifi_connected = false;
+        esp_wifi_connect();
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ESP_LOGI(TAG, "WiFi Connected! IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        wifi_connected = true;
+    }
+}
+
+/* WiFi Init */
+static void init_wifi(void)
+{
+    ESP_ERROR_CHECK(nvs_flash_init());
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    esp_event_handler_instance_t instance_any_id;
+    esp_event_handler_instance_t instance_got_ip;
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
+                                                        ESP_EVENT_ANY_ID,
+                                                        &wifi_event_handler,
+                                                        NULL,
+                                                        &instance_any_id));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
+                                                        IP_EVENT_STA_GOT_IP,
+                                                        &wifi_event_handler,
+                                                        NULL,
+                                                        &instance_got_ip));
+
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = WIFI_SSID,
+            .password = WIFI_PASS,
+            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
+        },
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    ESP_LOGI(TAG, "WiFi Init done. Connecting to %s...", WIFI_SSID);
+}
+
 /* I2S Init */
 static void init_i2s(void)
 {
-    ESP_LOGI(TAG, "Init I2S");
-
     i2s_config_t cfg = {
         .mode = I2S_MODE_MASTER | I2S_MODE_RX,
         .sample_rate = SAMPLE_RATE,
         .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
-        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT, // Mono
-        .communication_format = I2S_COMM_FORMAT_STAND_I2S, // Philips Standard
+        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+        .communication_format = I2S_COMM_FORMAT_STAND_I2S,
         .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
         .dma_buf_count = DMA_BUF_COUNT,
         .dma_buf_len = DMA_BUF_LEN,
@@ -102,7 +171,44 @@ static void init_i2s(void)
     ESP_ERROR_CHECK(i2s_zero_dma_buffer(I2S_PORT));
 }
 
-/* Calculate RMS of a frame */
+/* HTTP Upload Task */
+static void upload_audio_to_server(const uint8_t *data, size_t len)
+{
+    if (!wifi_connected) {
+        ESP_LOGE(TAG, "Cannot upload: WiFi not connected!");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Uploading %d bytes to %s...", len, SERVER_URL);
+
+    esp_http_client_config_t config = {
+        .url = SERVER_URL,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = 10000,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+
+    // Set headers
+    esp_http_client_set_header(client, "Content-Type", "audio/wav");
+    
+    // Set post data
+    esp_http_client_set_post_field(client, (const char *)data, len);
+
+    // Perform request
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Upload Status = %d, content_length = %lld",
+                esp_http_client_get_status_code(client),
+                esp_http_client_get_content_length(client));
+        // TODO: Read response (JSON command from server) here if needed
+    } else {
+        ESP_LOGE(TAG, "Upload failed: %s", esp_err_to_name(err));
+    }
+
+    esp_http_client_cleanup(client);
+}
+
+/* RMS Calc */
 static float calculate_rms(int16_t *data, int samples)
 {
     float sum = 0.0f;
@@ -113,41 +219,6 @@ static float calculate_rms(int16_t *data, int samples)
     return sqrtf(sum / samples);
 }
 
-/* Send RAM buffer as Base64 */
-static void send_ram_as_base64(const uint8_t *data, size_t len)
-{
-    printf("\n===WAV_START===\n");
-    printf("SIZE:%d\n", len);
-
-    static const char tbl[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    uint8_t buf[3];
-    int cnt = 0;
-    
-    for (size_t i = 0; i < len; i += 3) {
-        size_t n = 0;
-        buf[0] = data[i]; n++;
-        if (i+1 < len) { buf[1] = data[i+1]; n++; }
-        if (i+2 < len) { buf[2] = data[i+2]; n++; }
-
-        char o[4];
-        o[0] = tbl[buf[0] >> 2];
-        o[1] = tbl[((buf[0] & 3) << 4) | (n > 1 ? buf[1] >> 4 : 0)];
-        o[2] = n > 1 ? tbl[((buf[1] & 0xF) << 2) | (n > 2 ? buf[2] >> 6 : 0)] : '=';
-        o[3] = n > 2 ? tbl[buf[2] & 0x3F] : '=';
-
-        for (int j = 0; j < 4; j++) {
-            putchar(o[j]);
-            if (++cnt % 128 == 0) {
-                // vTaskDelay(1); 
-            }
-        }
-    }
-
-    printf("\n===WAV_END===\n");
-}
-
 /* Main VAD Task */
 void vad_task(void *arg)
 {
@@ -155,8 +226,7 @@ void vad_task(void *arg)
     int32_t *i2s_buff = malloc(VAD_FRAME_SIZE * 4 * sizeof(int32_t)); 
     int16_t *vad_buff = malloc(VAD_FRAME_SIZE * sizeof(int16_t));   
     
-    // Allocate RAM for recording (3 seconds)
-    // 16000 * 2 * 3 = 96000 bytes. Plus header 44 bytes.
+    // Allocate RAM for recording
     size_t pcm_size = SAMPLE_RATE * 2 * RECORD_TIME_SEC;
     size_t header_size = sizeof(wav_header_t);
     size_t total_size = header_size + pcm_size;
@@ -167,19 +237,53 @@ void vad_task(void *arg)
         vTaskDelete(NULL);
     }
     
-    // Initialize recording buffer pointer
     int16_t *pcm_start = (int16_t *)(rec_buf + header_size);
 
-    ESP_LOGI(TAG, "VAD Listening... (Threshold: %d)", VAD_THRESHOLD);
+    // --- PHASE 1: CALIBRATION ---
+    ESP_LOGI(TAG, "Starting Calibration (%d seconds)... Please keep silent.", CALIBRATION_SEC);
+    
+    int calib_frames = (CALIBRATION_SEC * SAMPLE_RATE) / VAD_FRAME_SIZE;
+    float sum_rms = 0.0f;
+    int valid_frames = 0;
 
-    while (1) {
-        // 1. Read Frame
+    for (int i = 0; i < calib_frames; i++) {
         i2s_read(I2S_PORT, i2s_buff, VAD_FRAME_SIZE * 4, &bytes_read, portMAX_DELAY);
         int samples = bytes_read / 4;
         
-        // 2. Convert & RMS
+        for (int j = 0; j < samples; j++) {
+            int32_t s = i2s_buff[j] >> 11;
+            vad_buff[j] = (int16_t)s;
+        }
+        
+        float rms = calculate_rms(vad_buff, samples);
+        sum_rms += rms;
+        valid_frames++;
+        
+        if (i % 50 == 0) {
+            ESP_LOGI(TAG, "Calibrating... Current RMS: %.1f", rms);
+        }
+    }
+
+    float noise_floor = sum_rms / valid_frames;
+    vad_threshold = (int)(noise_floor + VAD_MARGIN);
+    
+    ESP_LOGI(TAG, ">>> Calibration Done. Noise Floor: %.1f, Threshold set to: %d", noise_floor, vad_threshold);
+    
+    // Optional: Wait for WiFi if not connected yet
+    while (!wifi_connected) {
+        ESP_LOGW(TAG, "Waiting for WiFi...");
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+
+    // --- PHASE 2: LISTENING ---
+    ESP_LOGI(TAG, "VAD Listening...");
+
+    while (1) {
+        i2s_read(I2S_PORT, i2s_buff, VAD_FRAME_SIZE * 4, &bytes_read, portMAX_DELAY);
+        int samples = bytes_read / 4;
+        
         for (int i = 0; i < samples; i++) {
-            int32_t s = i2s_buff[i] >> 11; // Gain adjusted
+            int32_t s = i2s_buff[i] >> 11;
             if (s > 32767) s = 32767;
             if (s < -32768) s = -32768;
             vad_buff[i] = (int16_t)s;
@@ -187,22 +291,20 @@ void vad_task(void *arg)
         
         float rms = calculate_rms(vad_buff, samples);
         
-        // 3. Trigger Logic
-        if (rms > VAD_THRESHOLD) {
-            ESP_LOGI(TAG, ">>> VAD Triggered! (RMS: %.1f) Recording %d sec...", rms, RECORD_TIME_SEC);
+        if (rms > vad_threshold) {
+            ESP_LOGI(TAG, ">>> Triggered! (RMS: %.1f) Recording...", rms);
             
-            // Start Recording Process
-            // Reset PCM pointer
+            // Start Recording
             int16_t *pcm_ptr = pcm_start;
             size_t recorded_samples = 0;
             size_t target_samples = pcm_size / 2;
             
-            // Pre-fill with current frame
+            // Pre-fill
             memcpy(pcm_ptr, vad_buff, samples * 2);
             pcm_ptr += samples;
             recorded_samples += samples;
             
-            // Continue recording loop
+            // Record Loop
             while (recorded_samples < target_samples) {
                  i2s_read(I2S_PORT, i2s_buff, VAD_FRAME_SIZE * 4, &bytes_read, portMAX_DELAY);
                  int chunk_samples = bytes_read / 4;
@@ -219,29 +321,32 @@ void vad_task(void *arg)
                  }
             }
             
-            // Prepare Header
+            // Prepare Header & Upload
             wav_header_t header = create_wav_header(pcm_size);
             memcpy(rec_buf, &header, header_size);
             
-            ESP_LOGI(TAG, "Recording Done. Sending...");
-            send_ram_as_base64(rec_buf, total_size);
-            ESP_LOGI(TAG, "Sent. Resuming VAD...");
+            ESP_LOGI(TAG, "Recording Done. Uploading...");
+            upload_audio_to_server(rec_buf, total_size);
             
-            // Clear buffer to avoid re-triggering immediately
+            // Cooldown
             i2s_zero_dma_buffer(I2S_PORT);
-            
-            // Wait a bit to let noise settle
-            vTaskDelay(pdMS_TO_TICKS(500));
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            ESP_LOGI(TAG, "Resuming VAD...");
         }
         
-        vTaskDelay(pdMS_TO_TICKS(10)); // Slight delay to yield
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
 void app_main(void)
 {
     esp_task_wdt_deinit();
+    
+    // Init WiFi first so it connects while calibrating
+    init_wifi();
+    
     init_i2s();
     
+    // Start VAD Task
     xTaskCreate(vad_task, "vad", 4096, NULL, 5, NULL);
 }
