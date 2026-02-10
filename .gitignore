@@ -8,13 +8,32 @@ dependencies.lock
 *.elf
 *.map
 *.hex
+.cache/
 
-# Runtime generated
+# Python / uv
+__pycache__/
+*.pyc
+.venv/
+.python-version
+server/.venv/
+server/__pycache__/
+.pytest_cache/
+
+# Data Collection (Uploaded files)
+server/uploads/*
+!server/uploads/.gitkeep
+
+# Runtime generated & logs
 record.wav
 record.log
 audio.b64
+session-ses_*.md
+*.wav
 
 # Editor
 .vscode/
 .idea/
 *.swp
+*.swo
+*~
+
