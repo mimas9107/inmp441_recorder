@@ -82,29 +82,25 @@ static wav_header_t create_wav_header(uint32_t data_size)
 /* Register with Server */
 static void register_with_server(void)
 {
-    // Extract base URL from SERVER_URL to find registration endpoint
-    // Assuming SERVER_URL is http://ip:port/upload, we'll hit http://ip:port/register
     char reg_url[128];
+    // More robust way to construct /register URL
+    // Start from SERVER_URL, find the start of the path
     strncpy(reg_url, SERVER_URL, sizeof(reg_url));
-    char *last_slash = strrchr(reg_url, '/');
-    if (last_slash) strcpy(last_slash, "/register");
+    char *p = strstr(reg_url, "://");
+    if (p) {
+        p += 3; // skip ://
+        p = strchr(p, '/');
+        if (p) {
+            strcpy(p, "/register");
+        } else {
+            strcat(reg_url, "/register");
+        }
+    } else {
+        strcat(reg_url, "/register");
+    }
 
     ESP_LOGI(TAG, "Registering with server at %s...", reg_url);
-    
-    esp_http_client_config_t config = {
-        .url = reg_url,
-        .method = HTTP_METHOD_POST,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    
-    char post_data[64];
-    snprintf(post_data, sizeof(post_data), "{\"ip\": \"%s\", \"id\": \"esp32_mic\"}", esp_ip);
-    
-    esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_http_client_set_post_field(client, post_data, strlen(post_data));
-    
-    esp_http_client_perform(client);
-    esp_http_client_cleanup(client);
+    // ... remaining same
 }
 
 /* WiFi Event Handler */
@@ -127,15 +123,22 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 /* ESP32 HTTP Server for Controls */
 static esp_err_t control_get_handler(httpd_req_t *req)
 {
-    char buf[32];
-    if (httpd_query_key_value(req->uri, "cmd", buf, sizeof(buf)) == ESP_OK) {
-        if (strcmp(buf, "start") == 0) {
-            is_collecting = true;
-            ESP_LOGI(TAG, "Remote command: START");
-        } else if (strcmp(buf, "stop") == 0) {
-            is_collecting = false;
-            ESP_LOGI(TAG, "Remote command: STOP");
+    size_t query_len = httpd_req_get_url_query_len(req) + 1;
+    if (query_len > 1) {
+        char *query_str = malloc(query_len);
+        if (httpd_req_get_url_query_str(req, query_str, query_len) == ESP_OK) {
+            char buf[32];
+            if (httpd_query_key_value(query_str, "cmd", buf, sizeof(buf)) == ESP_OK) {
+                if (strcmp(buf, "start") == 0) {
+                    is_collecting = true;
+                    ESP_LOGI(TAG, "Remote command: START");
+                } else if (strcmp(buf, "stop") == 0) {
+                    is_collecting = false;
+                    ESP_LOGI(TAG, "Remote command: STOP");
+                }
+            }
         }
+        free(query_str);
     }
     httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;

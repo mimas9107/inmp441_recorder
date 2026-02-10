@@ -138,41 +138,43 @@ def reset_counts():
 @app.route("/register", methods=["POST"])
 def register():
     data = request.json
+    print(f"Received registration: {data}")
+    if not data or "ip" not in data:
+        return jsonify({"status": "error", "message": "No IP provided"}), 400
+
     with state_lock:
         state["esp_ip"] = data.get("ip")
-    print(f"Device registered: {state['esp_ip']}")
+    print(f"Device registered successfully: {state['esp_ip']}")
     return jsonify({"status": "registered"}), 200
 
 
 @app.route("/esp_control")
 def esp_control():
     cmd = request.args.get("cmd")
+    print(f"Control command received: {cmd}")
     if not state["esp_ip"]:
+        print("Error: No device registered")
         return "No device registered", 400
 
     try:
-        # Forward command to ESP32
-        resp = requests.get(f"http://{state['esp_ip']}/control?cmd={cmd}", timeout=5)
+        url = f"http://{state['esp_ip']}/control?cmd={cmd}"
+        print(f"Sending command to ESP32: {url}")
+        resp = requests.get(url, timeout=5)
+        print(f"ESP32 response: {resp.status_code} - {resp.text}")
         if resp.status_code == 200:
             with state_lock:
                 state["is_collecting"] = cmd == "start"
             return redirect(url_for("index"))
     except Exception as e:
+        print(f"Error contacting ESP32: {e}")
         return f"Error contacting ESP32: {e}", 500
 
     return "Failed", 400
 
 
-@app.route("/set_label")
-def set_label():
-    label = request.args.get("label", "sample")
-    with state_lock:
-        state["current_label"] = label
-    return redirect(url_for("index"))
-
-
 @app.route("/upload", methods=["POST"])
 def upload_file():
+    print(f"Receiving audio upload...")
     with state_lock:
         label = state["current_label"]
         count = state["counts"].get(label, 0) + 1
@@ -181,6 +183,7 @@ def upload_file():
         filepath = os.path.join(UPLOAD_FOLDER, filename)
 
         data = request.get_data()
+        print(f"Saving {len(data)} bytes to {filename}")
         with open(filepath, "wb") as f:
             f.write(data)
 
@@ -192,7 +195,7 @@ def upload_file():
                 "time": datetime.datetime.now().strftime("%H:%M:%S"),
             },
         )
-    print(f"Captured: {filename}")
+    print(f"Upload complete: {filename}")
     return "OK", 200
 
 
