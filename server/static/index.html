@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Audio Collector Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>🎤 Audio Collection Center</h1>
+    
+    <div class="card">
+        <h3>Device Status</h3>
+        <div class="status-row">
+            <span>ESP32 IP: <b id="esp-ip">Detecting...</b></span>
+            <span id="collect-status" class="status-indicator status-off">IDLE</span>
+        </div>
+        <div class="input-group" style="margin-top: 20px;">
+            <button id="btn-start" class="btn btn-green btn-disabled" disabled onclick="control('start')">START CAPTURE</button>
+            <button id="btn-stop" class="btn btn-red btn-disabled" disabled onclick="control('stop')">STOP</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Label Settings</h3>
+        <p>Current Target: <b id="current-label" style="color: #1a73e8;">...</b></p>
+        <div class="input-group">
+            <input type="text" id="labelInput" placeholder="New label (e.g. hey_esp)">
+            <button class="btn btn-blue" onclick="setLabel()">Set</button>
+        </div>
+        <div style="display: flex; gap: 8px;">
+            <button class="btn btn-orange" style="padding: 6px 12px; font-size: 12px;" onclick="quickLabel('noise')">Noise</button>
+            <button class="btn btn-orange" style="padding: 6px 12px; font-size: 12px;" onclick="quickLabel('hey_esp')">Keyword</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Statistics</h3>
+        <table>
+            <thead>
+                <tr><th>Label</th><th style="text-align: right;">Samples</th></tr>
+            </thead>
+            <tbody id="stats-body">
+                <tr><td colspan="2" style="text-align: center;">Loading...</td></tr>
+            </tbody>
+        </table>
+        <button class="btn btn-red" style="width: 100%; margin-top: 15px; padding: 6px;" onclick="resetStats()">Reset Statistics</button>
+    </div>
+
+    <div class="card">
+        <h3>Recent Samples</h3>
+        <div id="samples-list">
+            <!-- Samples added here -->
+        </div>
+    </div>
+
+    <script>
+        let lastTimestamp = 0;
+
+        async function updateStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+
+                // Update IP and Status
+                document.getElementById('esp-ip').innerText = data.esp_ip || "Not Registered";
+                const statusEl = document.getElementById('collect-status');
+                const btnStart = document.getElementById('btn-start');
+                const btnStop = document.getElementById('btn-stop');
+
+                if (data.is_collecting) {
+                    statusEl.innerText = "COLLECTING";
+                    statusEl.className = "status-indicator status-on";
+                    btnStart.disabled = true;
+                    btnStart.className = "btn btn-green btn-disabled";
+                    btnStop.disabled = false;
+                    btnStop.className = "btn btn-red";
+                } else {
+                    statusEl.innerText = "IDLE";
+                    statusEl.className = "status-indicator status-off";
+                    btnStart.disabled = !data.esp_ip;
+                    btnStart.className = data.esp_ip ? "btn btn-green" : "btn btn-green btn-disabled";
+                    btnStop.disabled = true;
+                    btnStop.className = "btn btn-red btn-disabled";
+                }
+
+                // Update Label
+                document.getElementById('current-label').innerText = data.current_label;
+
+                // Update Stats
+                const statsBody = document.getElementById('stats-body');
+                statsBody.innerHTML = '';
+                const labels = Object.keys(data.counts);
+                if (labels.length === 0) {
+                    statsBody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: #999;">No data yet</td></tr>';
+                } else {
+                    labels.forEach(l => {
+                        statsBody.innerHTML += `<tr><td><b>${l}</b></td><td style="text-align: right;">${data.counts[l]}</td></tr>`;
+                    });
+                }
+
+                // Update Samples List
+                const listEl = document.getElementById('samples-list');
+                listEl.innerHTML = '';
+                data.samples.forEach(s => {
+                    listEl.innerHTML += `
+                        <div class="sample-item" style="padding: 10px 0; border-bottom: 1px solid #f1f3f4;">
+                            <div class="sample-info">
+                                <b>${s.label}</b><br><small>${s.time}</small>
+                            </div>
+                            <audio controls src="/file/${s.name}"></audio>
+                            <button class="btn btn-red" style="padding: 4px 8px; font-size: 11px;" onclick="deleteFile('${s.name}')">DEL</button>
+                        </div>
+                    `;
+                });
+
+            } catch (e) {
+                console.error("Update failed", e);
+            }
+        }
+
+        async function control(cmd) {
+            try {
+                const resp = await fetch(`/esp_control?cmd=${cmd}`);
+                const result = await resp.json();
+                if (result.status !== 'ok') alert("Control failed: " + (result.message || "Unknown error"));
+                updateStatus();
+            } catch (e) {
+                console.error("Control failed", e);
+            }
+        }
+
+        async function setLabel() {
+            const val = document.getElementById('labelInput').value;
+            if (val) {
+                try {
+                    await fetch(`/set_label?label=${val}`);
+                    document.getElementById('labelInput').value = '';
+                    updateStatus();
+                } catch (e) { console.error(e); }
+            }
+        }
+
+        async function quickLabel(val) {
+            try {
+                await fetch(`/set_label?label=${val}`);
+                updateStatus();
+            } catch (e) { console.error(e); }
+        }
+
+        async function resetStats() {
+            if (confirm("Reset statistics?")) {
+                try {
+                    await fetch('/reset_counts', { method: 'POST' });
+                    updateStatus();
+                } catch (e) { console.error(e); }
+            }
+        }
+
+        async function deleteFile(name) {
+            try {
+                await fetch(`/delete/${name}`, { method: 'POST' });
+                updateStatus();
+            } catch (e) { console.error(e); }
+        }
+
+        // Poll every 2 seconds
+        setInterval(updateStatus, 2000);
+        updateStatus();
+    </script>
+</body>
+</html>

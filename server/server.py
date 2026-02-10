@@ -1,19 +1,10 @@
-from flask import (
-    Flask,
-    request,
-    render_template_string,
-    redirect,
-    url_for,
-    send_from_directory,
-    jsonify,
-)
+from flask import Flask, request, jsonify, send_from_directory, redirect, url_for
 import os
 import datetime
-import subprocess
 import threading
 import requests
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static", static_url_path="")
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
@@ -22,159 +13,88 @@ state = {
     "current_label": "noise",
     "samples": [],
     "counts": {},
-    "esp_ip": None,  # Registered ESP32 IP
+    "esp_ip": None,
     "is_collecting": False,
 }
 state_lock = threading.Lock()
 
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Edge Impulse Data Collector</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; background: #f4f4f9; }
-        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; color: white; font-weight: bold; margin-right: 10px; }
-        .btn-blue { background: #007bff; }
-        .btn-red { background: #dc3545; }
-        .btn-green { background: #28a745; }
-        .btn-orange { background: #fd7e14; }
-        .btn-disabled { background: #ccc; cursor: not-allowed; }
-        input[type="text"] { padding: 10px; width: 60%; border: 1px solid #ddd; border-radius: 4px; }
-        .sample-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #eee; }
-        .status-on { color: green; font-weight: bold; }
-        .status-off { color: red; font-weight: bold; }
-    </style>
-</head>
-<body>
-    <h1>🎤 Audio Collection Center</h1>
-    
-    <div class="card">
-        <h3>Device Status</h3>
-        <p>ESP32 IP: <b>{{ esp_ip if esp_ip else "Not Registered" }}</b></p>
-        <p>Collecting: <span class="{{ 'status-on' if is_collecting else 'status-off' }}">{{ "YES" if is_collecting else "NO" }}</span></p>
-        
-        <hr>
-        <button class="btn {{ 'btn-green' if not is_collecting else 'btn-disabled' }}" 
-                onclick="location.href='/esp_control?cmd=start'" {{ 'disabled' if is_collecting or not esp_ip }}>START CAPTURE</button>
-        
-        <button class="btn {{ 'btn-red' if is_collecting else 'btn-disabled' }}" 
-                onclick="location.href='/esp_control?cmd=stop'" {{ 'disabled' if not is_collecting or not esp_ip }}>STOP</button>
-    </div>
 
-    <div class="card">
-        <h3>Label Settings</h3>
-        <p>Current: <b style="color:blue">{{ current_label }}</b></p>
-        <form action="/set_label" method="GET">
-            <input type="text" name="label" placeholder="New label..." value="{{ current_label }}">
-            <button class="btn btn-blue" type="submit">Set</button>
-        </form>
-        <div style="margin-top:10px">
-            <button class="btn btn-orange" style="padding:5px" onclick="location.href='/set_label?label=noise'">Noise</button>
-            <button class="btn btn-orange" style="padding:5px" onclick="location.href='/set_label?label=hey_esp'">Keyword</button>
-        </div>
-    </div>
-
-    <div class="card">
-        <h3>Statistics</h3>
-        <table style="width: 100%; border-collapse: collapse;">
-            <tr style="border-bottom: 2px solid #eee;">
-                <th style="text-align: left; padding: 8px;">Label</th>
-                <th style="text-align: right; padding: 8px;">Samples</th>
-            </tr>
-            {% for label, count in counts.items() %}
-            <tr style="border-bottom: 1px solid #eee;">
-                <td style="padding: 8px;"><b>{{ label }}</b></td>
-                <td style="text-align: right; padding: 8px;">{{ count }}</td>
-            </tr>
-            {% endfor %}
-            {% if not counts %}
-            <tr><td colspan="2" style="text-align: center; padding: 10px; color: #999;">No data yet</td></tr>
-            {% endif %}
-        </table>
-        <form action="/reset_counts" method="POST" style="margin-top: 15px;">
-            <button class="btn btn-red" style="width: 100%; padding: 5px;" onclick="return confirm('Reset all counters?')">Reset Statistics</button>
-        </form>
-    </div>
-
-    <div class="card">
-        <h3>Last 10 Samples</h3>
-        {% for s in samples %}
-        <div class="sample-item">
-            <span><b>{{ s.label }}</b><br><small>{{ s.time }}</small></span>
-            <audio controls src="/file/{{ s.name }}" style="height: 30px; width: 150px;"></audio>
-            <form action="/delete/{{ s.name }}" method="POST"><button class="btn btn-red" style="padding: 5px 10px;">X</button></form>
-        </div>
-        {% endfor %}
-    </div>
-
-    <button class="btn btn-blue" onclick="location.reload()" style="width: 100%;">Refresh Dashboard</button>
-</body>
-</html>
-"""
+@app.before_request
+def log_request_info():
+    # Filter out noisy polls and pings
+    if request.path in ["/api/status", "/"]:
+        return
+    print(f"\n[Incoming] {request.remote_addr} {request.method} {request.path}")
 
 
 @app.route("/")
 def index():
-    return render_template_string(
-        HTML_TEMPLATE,
-        current_label=state["current_label"],
-        samples=state["samples"][:10],
-        esp_ip=state["esp_ip"],
-        is_collecting=state["is_collecting"],
-        counts=state["counts"],
-    )
+    return send_from_directory("static", "index.html")
 
 
-@app.route("/reset_counts", methods=["POST"])
-def reset_counts():
+@app.route("/api/status")
+def get_status():
     with state_lock:
-        state["counts"] = {}
-    return redirect(url_for("index"))
+        return jsonify(
+            {
+                "current_label": state["current_label"],
+                "esp_ip": state["esp_ip"],
+                "is_collecting": state["is_collecting"],
+                "counts": state["counts"],
+                "samples": state["samples"][:10],
+            }
+        )
 
 
 @app.route("/register", methods=["POST"])
 def register():
     data = request.json
-    print(f"Received registration: {data}")
-    if not data or "ip" not in data:
-        return jsonify({"status": "error", "message": "No IP provided"}), 400
+    if not data:
+        return jsonify({"status": "error"}), 400
+
+    # If ESP32 reports 0.0.0.0, use the request's source IP
+    ip = data.get("ip")
+    if not ip or ip == "0.0.0.0":
+        ip = request.remote_addr
 
     with state_lock:
-        state["esp_ip"] = data.get("ip")
-    print(f"Device registered successfully: {state['esp_ip']}")
-    return jsonify({"status": "registered"}), 200
+        state["esp_ip"] = ip
+    print(f"Device registered: {ip}")
+    return jsonify({"status": "registered", "ip": ip}), 200
 
 
 @app.route("/esp_control")
 def esp_control():
     cmd = request.args.get("cmd")
-    print(f"Control command received: {cmd}")
     if not state["esp_ip"]:
-        print("Error: No device registered")
-        return "No device registered", 400
+        return jsonify({"status": "error", "message": "No device"}), 400
 
+    target_ip = state["esp_ip"].strip().rstrip("/")
     try:
-        url = f"http://{state['esp_ip']}/control?cmd={cmd}"
-        print(f"Sending command to ESP32: {url}")
-        resp = requests.get(url, timeout=5)
-        print(f"ESP32 response: {resp.status_code} - {resp.text}")
+        url = f"http://{target_ip}/control?cmd={cmd}"
+        print(f"Forwarding to ESP32: {url}")
+        resp = requests.get(url, timeout=3)
         if resp.status_code == 200:
             with state_lock:
                 state["is_collecting"] = cmd == "start"
-            return redirect(url_for("index"))
+            return jsonify({"status": "ok", "collecting": state["is_collecting"]})
     except Exception as e:
-        print(f"Error contacting ESP32: {e}")
-        return f"Error contacting ESP32: {e}", 500
+        print(f"Control Error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+    return jsonify({"status": "failed"}), 400
 
-    return "Failed", 400
+
+@app.route("/set_label")
+def set_label():
+    label = request.args.get("label", "sample")
+    with state_lock:
+        state["current_label"] = label
+    print(f"Label changed to: {label}")
+    return jsonify({"status": "ok", "current_label": label})
 
 
 @app.route("/upload", methods=["POST"])
 def upload_file():
-    print(f"Receiving audio upload...")
     with state_lock:
         label = state["current_label"]
         count = state["counts"].get(label, 0) + 1
@@ -183,7 +103,6 @@ def upload_file():
         filepath = os.path.join(UPLOAD_FOLDER, filename)
 
         data = request.get_data()
-        print(f"Saving {len(data)} bytes to {filename}")
         with open(filepath, "wb") as f:
             f.write(data)
 
@@ -195,8 +114,16 @@ def upload_file():
                 "time": datetime.datetime.now().strftime("%H:%M:%S"),
             },
         )
-    print(f"Upload complete: {filename}")
-    return "OK", 200
+    print(f"Stored Audio: {filename} ({len(data)} bytes)")
+    return jsonify({"status": "ok", "filename": filename}), 200
+
+
+@app.route("/reset_counts", methods=["POST"])
+def reset_counts():
+    with state_lock:
+        state["counts"] = {}
+    print("Statistics reset.")
+    return jsonify({"status": "ok"})
 
 
 @app.route("/file/<path:filename>")
@@ -211,8 +138,10 @@ def delete_file(filename):
         os.remove(filepath)
     with state_lock:
         state["samples"] = [s for s in state["samples"] if s["name"] != filename]
-    return redirect(url_for("index"))
+    print(f"Deleted: {filename}")
+    return jsonify({"status": "ok"})
 
 
 if __name__ == "__main__":
+    print("Server starting on http://0.0.0.0:5000")
     app.run(host="0.0.0.0", port=5000, debug=False)

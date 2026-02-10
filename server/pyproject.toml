@@ -6,6 +6,5 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "flask>=3.1.2",
-    "openai-whisper>=20250625",
     "requests>=2.32.5",
 ]

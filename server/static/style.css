@@ -1,0 +1,32 @@
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 700px; margin: auto; padding: 20px; background: #f0f2f5; color: #333; }
+h1 { text-align: center; color: #1a73e8; }
+.card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 20px; }
+h3 { margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 10px; color: #5f6368; }
+
+.btn { padding: 10px 24px; border: none; border-radius: 6px; cursor: pointer; color: white; font-weight: 600; transition: all 0.2s; font-size: 14px; }
+.btn:active { transform: translateY(1px); }
+.btn-blue { background: #1a73e8; }
+.btn-red { background: #d93025; }
+.btn-green { background: #1e8e3e; }
+.btn-orange { background: #f29900; }
+.btn-disabled { background: #bdc1c6; cursor: not-allowed; }
+
+.status-row { display: flex; justify-content: space-between; align-items: center; }
+.status-indicator { font-weight: bold; padding: 4px 12px; border-radius: 20px; font-size: 0.9em; }
+.status-on { background: #e6f4ea; color: #1e8e3e; }
+.status-off { background: #fce8e6; color: #d93025; }
+
+.input-group { display: flex; gap: 10px; margin: 15px 0; }
+input[type="text"] { flex-grow: 1; padding: 10px; border: 1px solid #dadce0; border-radius: 4px; outline: none; }
+input[type="text"]:focus { border-color: #1a73e8; }
+
+table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+th { text-align: left; color: #80868b; font-size: 0.85em; text-transform: uppercase; padding: 8px; }
+td { padding: 12px 8px; border-top: 1px solid #f1f3f4; }
+
+.sample-item { display: flex; justify-content: space-between; align-items: center; }
+.sample-info b { color: #202124; }
+.sample-info small { color: #70757a; }
+
+audio { height: 32px; filter: grayscale(1) opacity(0.7); }
+audio:hover { filter: none; opacity: 1; }

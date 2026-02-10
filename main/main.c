@@ -1,6 +1,6 @@
 /*
  * INMP441 I2S Recorder - Managed Collection Mode (feature01a)
- * Controlled by Remote Server (Start/Stop)
+ * Controlled by Remote Server (Start/Stop) + Connection Watchdog
  */
 
 #include <stdio.h>
@@ -39,7 +39,8 @@ static const char *TAG = "COLLECTOR";
 
 /* Globals */
 static bool wifi_connected = false;
-static bool is_collecting = false;  // Remote control flag
+static bool server_alive = false;
+static bool is_collecting = false;
 static char esp_ip[16] = "0.0.0.0";
 
 /* WAV header */
@@ -79,30 +80,6 @@ static wav_header_t create_wav_header(uint32_t data_size)
     return h;
 }
 
-/* Register with Server */
-static void register_with_server(void)
-{
-    char reg_url[128];
-    // More robust way to construct /register URL
-    // Start from SERVER_URL, find the start of the path
-    strncpy(reg_url, SERVER_URL, sizeof(reg_url));
-    char *p = strstr(reg_url, "://");
-    if (p) {
-        p += 3; // skip ://
-        p = strchr(p, '/');
-        if (p) {
-            strcpy(p, "/register");
-        } else {
-            strcat(reg_url, "/register");
-        }
-    } else {
-        strcat(reg_url, "/register");
-    }
-
-    ESP_LOGI(TAG, "Registering with server at %s...", reg_url);
-    // ... remaining same
-}
-
 /* WiFi Event Handler */
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                int32_t event_id, void* event_data)
@@ -123,22 +100,25 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 /* ESP32 HTTP Server for Controls */
 static esp_err_t control_get_handler(httpd_req_t *req)
 {
+    char buf[128];
     size_t query_len = httpd_req_get_url_query_len(req) + 1;
     if (query_len > 1) {
-        char *query_str = malloc(query_len);
-        if (httpd_req_get_url_query_str(req, query_str, query_len) == ESP_OK) {
-            char buf[32];
-            if (httpd_query_key_value(query_str, "cmd", buf, sizeof(buf)) == ESP_OK) {
-                if (strcmp(buf, "start") == 0) {
-                    is_collecting = true;
-                    ESP_LOGI(TAG, "Remote command: START");
-                } else if (strcmp(buf, "stop") == 0) {
+        if (httpd_req_get_url_query_str(req, buf, query_len) == ESP_OK) {
+            char val[32];
+            if (httpd_query_key_value(buf, "cmd", val, sizeof(val)) == ESP_OK) {
+                if (strcmp(val, "start") == 0) {
+                    if (server_alive) {
+                        is_collecting = true;
+                        ESP_LOGI(TAG, "Remote START");
+                    } else {
+                        ESP_LOGW(TAG, "Cannot start: Server not detected");
+                    }
+                } else if (strcmp(val, "stop") == 0) {
                     is_collecting = false;
-                    ESP_LOGI(TAG, "Remote command: STOP");
+                    ESP_LOGI(TAG, "Remote STOP");
                 }
             }
         }
-        free(query_str);
     }
     httpd_resp_send(req, "OK", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -149,17 +129,84 @@ static void start_webserver(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     if (httpd_start(&server, &config) == ESP_OK) {
-        httpd_uri_t control_uri = {
-            .uri      = "/control",
-            .method   = HTTP_GET,
-            .handler  = control_get_handler,
-            .user_ctx = NULL
-        };
+        httpd_uri_t control_uri = { .uri = "/control", .method = HTTP_GET, .handler = control_get_handler };
         httpd_register_uri_handler(server, &control_uri);
     }
 }
 
-/* I2S & WiFi Helpers */
+/* Connection Watchdog Task */
+void watchdog_task(void *arg)
+{
+    char ping_url[128];
+    strncpy(ping_url, SERVER_URL, sizeof(ping_url));
+    char *p = strstr(ping_url, "://");
+    if (p) {
+        p += 3;
+        p = strchr(p, '/');
+        if (p) *p = '\0';
+    }
+    // We just GET root to check if server is there
+    
+    while (1) {
+        if (wifi_connected) {
+            esp_http_client_config_t config = {
+                .url = ping_url,
+                .method = HTTP_METHOD_GET,
+                .timeout_ms = 3000,
+            };
+            esp_http_client_handle_t client = esp_http_client_init(&config);
+            esp_err_t err = esp_http_client_perform(client);
+            
+            if (err == ESP_OK) {
+                if (!server_alive) ESP_LOGI(TAG, "Server connection recovered.");
+                server_alive = true;
+            } else {
+                if (server_alive) ESP_LOGE(TAG, "Server connection lost!");
+                server_alive = false;
+                if (is_collecting) {
+                    ESP_LOGW(TAG, "Stopping collection due to server disconnect.");
+                    is_collecting = false;
+                }
+            }
+            esp_http_client_cleanup(client);
+        }
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
+
+static void register_with_server(void)
+{
+    char reg_url[128];
+    strncpy(reg_url, SERVER_URL, sizeof(reg_url));
+    char *p = strstr(reg_url, "://");
+    if (p) { p += 3; p = strchr(p, '/'); if (p) *p = '\0'; }
+    strcat(reg_url, "/register");
+
+    char post_data[64];
+    snprintf(post_data, sizeof(post_data), "{\"ip\": \"%s\", \"id\": \"esp32_mic\"}", esp_ip);
+
+    esp_http_client_config_t config = { .url = reg_url, .method = HTTP_METHOD_POST, .timeout_ms = 5000 };
+    
+    while (1) {
+        if (wifi_connected) {
+            char post_data[64];
+            snprintf(post_data, sizeof(post_data), "{\"ip\": \"%s\", \"id\": \"esp32_mic\"}", esp_ip);
+
+            esp_http_client_handle_t client = esp_http_client_init(&config);
+            esp_http_client_set_header(client, "Content-Type", "application/json");
+            esp_http_client_set_post_field(client, post_data, strlen(post_data));
+            esp_err_t err = esp_http_client_perform(client);
+            if (err == ESP_OK && esp_http_client_get_status_code(client) == 200) {
+                ESP_LOGI(TAG, "Registration successful!");
+                esp_http_client_cleanup(client);
+                break;
+            }
+            esp_http_client_cleanup(client);
+        }
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
+
 static void init_wifi(void) {
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
@@ -205,11 +252,14 @@ static void upload_audio_to_server(const uint8_t *data, size_t len) {
     esp_http_client_handle_t client = esp_http_client_init(&config);
     esp_http_client_set_header(client, "Content-Type", "audio/wav");
     esp_http_client_set_post_field(client, (const char *)data, len);
-    esp_http_client_perform(client);
+    esp_err_t err = esp_http_client_perform(client);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Upload failed, stopping...");
+        is_collecting = false;
+    }
     esp_http_client_cleanup(client);
 }
 
-/* Main Collection Task */
 void collection_task(void *arg)
 {
     size_t bytes_read;
@@ -220,21 +270,20 @@ void collection_task(void *arg)
     uint8_t *rec_buf = malloc(total_size);
     int16_t *pcm_start = (int16_t *)(rec_buf + header_size);
 
-    while (!wifi_connected) vTaskDelay(pdMS_TO_TICKS(1000));
     register_with_server();
 
     while (1) {
-        if (!is_collecting) {
+        if (!is_collecting || !server_alive) {
             vTaskDelay(pdMS_TO_TICKS(500));
             continue;
         }
 
-        ESP_LOGI(TAG, ">>> Capturing Sample...");
+        ESP_LOGI(TAG, "Capturing...");
         int16_t *pcm_ptr = pcm_start;
         size_t recorded_samples = 0;
         size_t target_samples = pcm_size / 2;
         
-        while (recorded_samples < target_samples && is_collecting) {
+        while (recorded_samples < target_samples && is_collecting && server_alive) {
              i2s_read(I2S_PORT, i2s_buff, DMA_BUF_LEN * 4, &bytes_read, portMAX_DELAY);
              int chunk_samples = bytes_read / 4;
              for (int i = 0; i < chunk_samples; i++) {
@@ -248,13 +297,13 @@ void collection_task(void *arg)
              }
         }
         
-        if (is_collecting) { // Only upload if not stopped midway
+        if (is_collecting && server_alive) {
             wav_header_t header = create_wav_header(pcm_size);
             memcpy(rec_buf, &header, header_size);
             upload_audio_to_server(rec_buf, total_size);
             vTaskDelay(pdMS_TO_TICKS(500));
         } else {
-            ESP_LOGI(TAG, "Capture interrupted by STOP command.");
+            ESP_LOGW(TAG, "Capture discarded.");
             i2s_zero_dma_buffer(I2S_PORT);
         }
     }
@@ -266,5 +315,6 @@ void app_main(void)
     init_wifi();
     init_i2s();
     start_webserver();
+    xTaskCreate(watchdog_task, "server_watch", 4096, NULL, 5, NULL);
     xTaskCreate(collection_task, "collect", 8192, NULL, 5, NULL);
 }
