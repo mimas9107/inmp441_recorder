@@ -20,9 +20,7 @@ server/__pycache__/
 .pytest_cache/
 
 # Data Collection (Uploaded files)
-# We ignore the content but keep the structure
-server/uploads/**/*
-!server/uploads/
+server/uploads/*
 !server/uploads/.gitkeep
 
 # Runtime generated & logs
