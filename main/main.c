@@ -22,6 +22,7 @@
 #include "esp_event.h"
 #include "esp_http_client.h"
 #include "esp_http_server.h"
+#include "driver/gpio.h"
 
 static const char *TAG = "COLLECTOR";
 
@@ -36,6 +37,9 @@ static const char *TAG = "COLLECTOR";
 #define DMA_BUF_COUNT   4
 #define DMA_BUF_LEN     256
 #define RECORD_TIME_SEC CONFIG_RECORD_SECONDS
+
+/* GPIO for LED Indicator */
+#define LED_GPIO        2
 
 /* Globals */
 static bool wifi_connected = false;
@@ -260,6 +264,10 @@ static void upload_audio_to_server(const uint8_t *data, size_t len) {
     esp_http_client_cleanup(client);
 }
 
+void set_led_state(bool state) {
+    gpio_set_level(LED_GPIO, state ? 1 : 0);
+}
+
 void collection_task(void *arg)
 {
     size_t bytes_read;
@@ -274,15 +282,17 @@ void collection_task(void *arg)
 
     while (1) {
         if (!is_collecting || !server_alive) {
+            set_led_state(false); // Turn off LED when not recording
             vTaskDelay(pdMS_TO_TICKS(500));
             continue;
         }
 
+        set_led_state(true); // Turn on LED when recording starts
         ESP_LOGI(TAG, "Capturing...");
         int16_t *pcm_ptr = pcm_start;
         size_t recorded_samples = 0;
         size_t target_samples = pcm_size / 2;
-        
+
         while (recorded_samples < target_samples && is_collecting && server_alive) {
              i2s_read(I2S_PORT, i2s_buff, DMA_BUF_LEN * 4, &bytes_read, portMAX_DELAY);
              int chunk_samples = bytes_read / 4;
@@ -296,10 +306,11 @@ void collection_task(void *arg)
                 }
              }
         }
-        
+
         if (is_collecting && server_alive) {
             wav_header_t header = create_wav_header(pcm_size);
             memcpy(rec_buf, &header, header_size);
+            set_led_state(false); // Turn off LED during data transmission
             upload_audio_to_server(rec_buf, total_size);
             vTaskDelay(pdMS_TO_TICKS(500));
         } else {
@@ -312,6 +323,18 @@ void collection_task(void *arg)
 void app_main(void)
 {
     esp_task_wdt_deinit();
+
+    // Initialize GPIO2 as output for LED
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << LED_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    gpio_config(&io_conf);
+    set_led_state(false); // Ensure LED is off initially
+
     init_wifi();
     init_i2s();
     start_webserver();
