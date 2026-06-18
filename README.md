@@ -1,3 +1,13 @@
+---
+name:          "README.md"
+description:   "INMP441 AI Voice Node (ESP32) project overview"
+created_date:  "2026/02/09 00:00:00"
+modified_date: "2026/06/18 10:00:00"
+project_version: "0.1.0"
+document_version: "1.0.0"
+agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash']
+---
+
 # INMP441 AI Voice Node (ESP32)
 
 本專案將 ESP32 (DevKit V1) 與 **INMP441 I2S 麥克風** 結合，實作了一個具備語音活動偵測 (VAD) 與 WiFi 上傳功能的 AI 語音節點。

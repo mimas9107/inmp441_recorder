@@ -1,8 +1,18 @@
+---
+name:          "CHANGELOG.md"
+description:   "Project version history and change logs"
+created_date:  "2026/02/09 00:00:00"
+modified_date: "2026/06/18 10:00:00"
+project_version: "0.1.0"
+document_version: "1.0.0"
+agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash']
+---
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
 
-## [feature01] - 2026-02-09 (Current Milestone)
+## [0.1.0] - 2026-02-09 (Current Milestone)
 
 ### Added
 - **WiFi Connectivity**: Added WiFi Station mode to connect to local AP.
@@ -16,7 +26,7 @@ All notable changes to this project will be documented in this file.
 - **VAD Strategy**: Switched from heavy `esp-sr` (WakeNet) to a lightweight custom RMS-based implementation due to memory constraints on ESP32-WROOM.
 - **I2S Configuration**: Optimized for stability with 4x256 DMA buffers.
 
-## [main] - 2026-02-09
+## [0.0.1] - 2026-02-09
 
 ### Added
 - **ESP-SR Integration (Attempted)**: Integrated `esp-sr` for WakeWord (WakeNet) detection.
