@@ -1,41 +1,45 @@
+---
+name:          "CHANGELOG.md"
+description:   "INMP441 Dataset Collector Node - change history"
+created_date:  "2026/02/09 00:00:00"
+modified_date: "2026/08/22 00:00:00"
+project_version: "0.1.0"
+document_version: "1.0.0"
+agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
+---
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
 
-## [feature01a] - 2026-02-09
+## [0.1.0] - 2026-08-22
+
+本分支首個標準化版本（COLLECTOR 變體，文件基準線）。
+
+### Added
+- **ESP-IDF v6.0.2 移植**: I2S 自舊版 `driver/i2s.h` 遷移至新 `esp_driver_i2s` 標準模式 API，使本分支得以在 v6 工具鏈編譯與運行。
+- **標準文件**: 新增 SPEC.md、MEMOIR.md，並將 README.md、CHANGELOG.md 升級為標準 YAML 標頭格式。
+
+### Changed
+- **I2S 初始化**: `i2s_driver_install` + `i2s_set_pin` 改為 `i2s_new_channel` + `i2s_channel_init_std_mode`（Philips 標準、32-bit mono、pin 於 init 一併套用）。
+- **讀取超時**: `i2s_read(portMAX_DELAY)` 改為 `i2s_channel_read(1000 ms timeout)` + 空讀保護，確保 Stop 指令能即時生效。
+- **DMA 清空**: `i2s_zero_dma_buffer` 以 channel `disable`/`enable` 循環取代。
+- **元件依賴**: `REQUIRES driver` 改為 `esp_driver_i2s esp_driver_gpio`。
+
+---
+
+## 歷史記錄（標準化前）
+
+## [feature01a 分支建立] - 2026-02-09
 
 ### Added
 - **Continuous Collection Mode**: New loop-based recording logic for dataset gathering.
-- **Sequential Saving**: Server now saves files as `sample1.wav`, `sample2.wav`, etc.
-- **Dataset Support**: Specifically designed for Edge Impulse keyword training.
+- **Sequential Saving**: Server saves files as `{label}.{count}.wav`.
+- **Dataset Support**: Designed for Edge Impulse keyword training.
 
 ### Removed
-- **VAD Logic**: Removed RMS threshold check to allow continuous background recording.
-- **Auto-Calibration**: Removed boot-up calibration as it's not needed for raw collection.
+- **VAD Logic / Auto-Calibration**: Not needed for raw collection.
 
-## [feature01] - 2026-02-09 (Current Milestone)
-
-### Added
-- **WiFi Connectivity**: Added WiFi Station mode to connect to local AP.
-- **HTTP Upload**: Implemented audio upload via HTTP POST to a remote Flask server.
-- **Auto-Calibration VAD**: Added a 10-second warm-up phase on boot to detect environmental noise floor and set a dynamic RMS threshold.
-- **RAM-based Recording**: Rewrote recording logic to use an internal RAM buffer (96KB), eliminating SPIFFS write latency issues (glitches).
-- **Project Configuration**: Added `Kconfig.projbuild` for easy configuration of WiFi, Server URL, and VAD parameters via `menuconfig`.
-- **Python Server**: Added `server/server.py` to receive and play uploaded audio.
-
-### Changed
-- **VAD Strategy**: Switched from heavy `esp-sr` (WakeNet) to a lightweight custom RMS-based implementation due to memory constraints on ESP32-WROOM.
-- **I2S Configuration**: Optimized for stability with 4x256 DMA buffers.
-
-## [main] - 2026-02-09
-
-### Added
-- **ESP-SR Integration (Attempted)**: Integrated `esp-sr` for WakeWord (WakeNet) detection.
-- **Partition Update**: Added `model` partition (1MB) to store speech recognition models.
-
-### Fixed (Before ESP-SR attempt)
-- **Audio Quality**: Fixed clipping by adjusting bit shift from `>> 8` to `>> 11`.
-- **Playback Speed**: Fixed "double speed" issue by ensuring correct I2S timing (Philips Standard).
-
-### Known Issues
-- **Memory Crash**: The `main` branch version crashes on ESP32-WROOM (no PSRAM) due to heap exhaustion during `esp-sr` initialization.
+### Later additions (pre-standardization)
+- **Remote Control Architecture**: Device registration, connection watchdog, server-driven Start/Stop via device-hosted `/control` endpoint.
+- **Indicator LED** (`3d30c9a`): GPIO2 onboard LED on while capturing, off during transmission/idle.

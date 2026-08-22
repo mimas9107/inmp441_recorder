@@ -1,34 +1,32 @@
-# INMP441 AI Voice Node (ESP32)
-
-本專案將 ESP32 (DevKit V1) 與 **INMP441 I2S 麥克風** 結合，實作了一個具備語音活動偵測 (VAD) 與 WiFi 上傳功能的 AI 語音節點。
-
-## 分支說明 (Branch Information)
-
-*   **feature01a (數據採集工具分支)**: 
-    *   基於 `feature01` 的穩定 WiFi 傳輸功能。
-    *   **移除 VAD 門檻**，改為連續循環錄音 (預設 3 秒，間隔 1 秒)。
-    *   伺服器端會將檔案依序存為 `sample1.wav`, `sample2.wav` ...。
-    *   專門用於收集音訊資料集，適合匯入 Edge Impulse 訓練模型。
-*   **feature01 (語音觸發分支)**: 
-    *   採用輕量級 **RMS-based VAD** 偵測。
-    *   具備 10 秒開機自動校正 (Auto-Calibration) 以適應環境底噪。
-    *   偵測到語音後自動錄製 3 秒 (RAM Buffer)。
-    *   透過 WiFi 將 WAV 檔 HTTP POST 到指定的 PC Server。
-    *   適合記憶體有限的 ESP32-WROOM (無 PSRAM) 環境。
-*   **main (主分支)**: 
-    *   嘗試整合官方 `esp-sr` (WakeNet 喚醒詞) 的版本。
-    *   **注意**: 此版本在標準 ESP32-WROOM 上會因為記憶體不足 (Memory Exhausted) 而崩潰。若要運行此分支，建議使用具備 PSRAM 的 ESP32 模組 (如 WROVER 或 S3)。
-
 ---
+name:          "README.md"
+description:   "INMP441 Dataset Collector Node (ESP32) - COLLECTOR variant overview"
+created_date:  "2026/02/09 00:00:00"
+modified_date: "2026/08/22 00:00:00"
+project_version: "0.1.0"
+document_version: "1.0.0"
+agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
+---
+
+# INMP441 Dataset Collector Node (ESP32) — feature01a
+
+本分支（COLLECTOR 變體）將 ESP32 (DevKit V1) + **INMP441 I2S 麥克風** 變成一台**受伺服器遙控的資料收集站**：移除 VAD 自動觸發，改由 Flask Server 遠端下達開始/停止指令，連續循環錄音上傳，專門用於蒐集聲音分類訓練資料集（如 Edge Impulse 關鍵詞模型）。
+
+## 分支說明
+
+| 分支 | 定位 | 觸發方式 |
+|------|------|----------|
+| **feature01a**（本分支） | 資料收集工具 | 伺服器遙控 Start/Stop |
+| **feature01** | 語音觸發節點 | RMS VAD 自動觸發 |
+| **master** | esp-sr 喚醒詞實驗 | WakeNet（需 PSRAM） |
 
 ## 系統架構
 
-1.  **開機校正**: 前 10 秒讀取環境音，計算平均 RMS 作為底噪基準。
-2.  **動態監聽**: 當 `即時 RMS > (底噪 + Margin)` 時觸發錄音。
-3.  **錄音儲存**: 音訊直接存入內部 RAM (約 96KB)，確保無卡頓與斷音。
-4.  **WiFi 上傳**: 將 WAV 資料透過 HTTP POST 傳送至區網內的 Flask Server。
-
----
+1.  **裝置註冊**: 開機後向 Server `POST /register` 回報 IP，每 5 秒重試直到成功。
+2.  **連線看門狗**: 每 5 秒 GET Server 根路徑；斷線時自動中止收集並停止上傳。
+3.  **遙控通道**: ESP32 自身運行 HTTP Server（`/control?cmd=start|stop`），接收 Server 的轉發指令。
+4.  **循環錄音**: 收集期間持續擷取 3 秒 WAV（RAM buffer）並 HTTP POST 上傳，間隔 0.5 秒。
+5.  **LED 指示**（GPIO2 板載燈）: 恆亮＝收集中；熄滅＝待機或傳輸中。
 
 ## 硬體連接
 
@@ -39,39 +37,44 @@
 | **SCK**    | GPIO 32   | BCLK |
 | **WS**     | GPIO 25   | WS (Word Select) |
 | **SD**     | GPIO 33   | DIN (Data In) |
-| **L/R**    | GND       | 設定為左聲道 |
+| **L/R**    | GND       | 左聲道 |
 
----
+## 軟體設定（ESP-IDF v6.0.2）
 
-## 軟體設定 (ESP-IDF)
+需先安裝 ESP-IDF **v6.0.2** 並執行 `export.sh`。
 
-1.  **設定參數**:
-    ```bash
-    idf.py menuconfig
-    ```
-    進入 **Inmp441 Recorder Configuration** 設定：
-    *   **WiFi SSID / Password**: 連線資訊。
-    *   **Server URL**: 例如 `http://192.168.1.100:5000/upload`。
-    *   **VAD RMS Threshold**: 觸發靈敏度 (Margin)，預設 500。
-2.  **編譯與燒錄**:
-    ```bash
-    idf.py build flash monitor
-    ```
+```bash
+idf.py menuconfig   # Inmp441 Recorder Configuration: WiFi SSID/Password、Server URL、Record Seconds
+idf.py build flash monitor
+```
 
----
+## PC 端控制伺服器（server/）
 
-## PC 端接收伺服器 (Server Side)
+```bash
+cd server
+uv sync                 # 或使用既有 .venv
+uv run server.py        # 監聽 0.0.0.0:5000
+```
 
-位於 `server/` 目錄下：
-1.  **安裝依賴**: `pip install flask requests openai-whisper`
-2.  **啟動服務**: `python3 server/server.py`
-3.  伺服器會將收到的錄音存放在 `server/uploads/` 並嘗試播放。
+主要端點：
 
----
+| 端點 | 功能 |
+|------|------|
+| `/` | 網頁儀表板（狀態、標籤、控制按鈕） |
+| `/api/status` | 即時狀態 JSON |
+| `/register` | 裝置註冊（POST JSON） |
+| `/esp_control?cmd=start\|stop` | 轉發控制指令至裝置 |
+| `/set_label?label=<名稱>` | 切換目前標籤（決定存檔命名） |
+| `/upload` | 收檔端點，存為 `{label}.{count}.wav` |
+| `/reset_counts` | 重置計數器 |
+| `/file/<name>` | 回播已上傳檔案 |
+
+典型收集流程：`set_label` 設標籤 → `esp_control?cmd=start` 連續收集 → `cmd=stop` 停止 → 檔案落於 `server/uploads/{label}.{n}.wav`。
 
 ## 技術細節
 
+*   **框架**: ESP-IDF v6.0.2（I2S 使用新 `esp_driver_i2s` 標準模式 API）
 *   **Sample Rate**: 16000 Hz
-*   **Bit Depth**: 16-bit PCM (從 24-bit 數據位移 `>> 11` 轉換)
-*   **VAD 策略**: 動態能量門檻 (Noise Floor + Margin)
-*   **傳輸協議**: HTTP POST (application/octet-stream)
+*   **Bit Depth**: 16-bit PCM（自 32-bit 樣本位移 `>> 11` 轉換）
+*   **DMA 配置**: 4 × 256 frames
+*   **傳輸協議**: HTTP POST（audio/wav）
