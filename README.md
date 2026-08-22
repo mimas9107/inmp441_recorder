@@ -2,10 +2,10 @@
 name:          "README.md"
 description:   "INMP441 AI Voice Node (ESP32) project overview"
 created_date:  "2026/02/09 00:00:00"
-modified_date: "2026/06/18 10:00:00"
-project_version: "0.1.0"
-document_version: "1.0.0"
-agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash']
+modified_date: "2026/08/22 00:00:00"
+project_version: "0.1.1"
+document_version: "1.0.1"
+agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 ---
 
 # INMP441 AI Voice Node (ESP32)
@@ -50,6 +50,10 @@ agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash']
 
 ## 軟體設定 (ESP-IDF)
 
+0.  **環境需求**: ESP-IDF **v6.0.2**（legacy I2S driver 已移除，本專案使用 `esp_driver_i2s` 新 API）。啟用環境：
+    ```bash
+    get_idf   # alias: . $HOME/esp/esp-idf/export.sh
+    ```
 1.  **設定參數**:
     ```bash
     idf.py menuconfig
@@ -67,10 +71,15 @@ agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash']
 
 ## PC 端接收伺服器 (Server Side)
 
-位於 `server/` 目錄下：
-1.  **安裝依賴**: `pip install flask requests openai-whisper`
-2.  **啟動服務**: `python3 server/server.py`
-3.  伺服器會將收到的錄音存放在 `server/uploads/` 並嘗試播放。
+位於 `server/` 目錄下（依賴以 uv 管理，見 `pyproject.toml`）：
+1.  **安裝依賴與啟動**:
+    ```bash
+    cd server
+    uv sync          # 依 uv.lock 建立環境；若只需接收上傳，uv pip install flask requests 即足夠
+    .venv/bin/python server.py
+    ```
+2.  伺服器會將收到的錄音存放在 `server/uploads/` 並嘗試播放。
+3.  注意：`pyproject.toml` 中宣告的 `openai-whisper` 目前未被程式碼使用（會拖入 torch）；僅做錄音接收時不需要安裝。
 
 ---
 

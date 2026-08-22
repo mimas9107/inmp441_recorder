@@ -8,7 +8,7 @@
 #include <stdbool.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/i2s.h"
+#include "driver/i2s_std.h"
 #include "esp_system.h"
 #include "esp_log.h"
 #include "esp_err.h"
@@ -34,10 +34,10 @@ static const char *TAG = "RECORDER";
 #define I2S_BCK_GPIO    CONFIG_I2S_BCK_GPIO
 
 /* Audio Constants */
-#define SAMPLE_RATE     16000
-#define I2S_PORT        I2S_NUM_0
-#define DMA_BUF_COUNT   4
-#define DMA_BUF_LEN     256
+#define SAMPLE_RATE          16000
+#define DMA_BUF_COUNT        4
+#define DMA_BUF_LEN          256
+#define I2S_READ_TIMEOUT_MS  1000
 
 /* VAD & Calibration Configuration */
 #define VAD_FRAME_SIZE      512  // Samples per frame (32ms)
@@ -48,6 +48,7 @@ static const char *TAG = "RECORDER";
 /* Globals */
 static bool wifi_connected = false;
 static int vad_threshold = 1000; // Default, will be updated by calibration
+static i2s_chan_handle_t i2s_rx = NULL;
 
 /* WAV header */
 typedef struct __attribute__((packed)) {
@@ -141,34 +142,28 @@ static void init_wifi(void)
     ESP_LOGI(TAG, "WiFi Init done. Connecting to %s...", WIFI_SSID);
 }
 
-/* I2S Init */
+/* I2S Init (new esp_driver_i2s standard mode) */
 static void init_i2s(void)
 {
-    i2s_config_t cfg = {
-        .mode = I2S_MODE_MASTER | I2S_MODE_RX,
-        .sample_rate = SAMPLE_RATE,
-        .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
-        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-        .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-        .dma_buf_count = DMA_BUF_COUNT,
-        .dma_buf_len = DMA_BUF_LEN,
-        .use_apll = true,
-        .tx_desc_auto_clear = false,
-        .fixed_mclk = 0,
+    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
+    chan_cfg.dma_desc_num = DMA_BUF_COUNT;
+    chan_cfg.dma_frame_num = DMA_BUF_LEN;
+    ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, NULL, &i2s_rx));
+
+    i2s_std_config_t std_cfg = {
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO),
+        .gpio_cfg = {
+            .mclk = I2S_GPIO_UNUSED,
+            .bclk = (gpio_num_t)I2S_BCK_GPIO,
+            .ws = (gpio_num_t)I2S_WS_GPIO,
+            .dout = I2S_GPIO_UNUSED,
+            .din = (gpio_num_t)I2S_DIN_GPIO,
+        },
     };
 
-    i2s_pin_config_t pin_cfg = {
-        .bck_io_num = I2S_BCK_GPIO,
-        .ws_io_num = I2S_WS_GPIO,
-        .data_out_num = I2S_PIN_NO_CHANGE,
-        .data_in_num = I2S_DIN_GPIO,
-        .mck_io_num = I2S_PIN_NO_CHANGE,
-    };
-
-    ESP_ERROR_CHECK(i2s_driver_install(I2S_PORT, &cfg, 0, NULL));
-    ESP_ERROR_CHECK(i2s_set_pin(I2S_PORT, &pin_cfg));
-    ESP_ERROR_CHECK(i2s_zero_dma_buffer(I2S_PORT));
+    ESP_ERROR_CHECK(i2s_channel_init_std_mode(i2s_rx, &std_cfg));
+    ESP_ERROR_CHECK(i2s_channel_enable(i2s_rx));
 }
 
 /* HTTP Upload Task */
@@ -247,8 +242,11 @@ void vad_task(void *arg)
     int valid_frames = 0;
 
     for (int i = 0; i < calib_frames; i++) {
-        i2s_read(I2S_PORT, i2s_buff, VAD_FRAME_SIZE * 4, &bytes_read, portMAX_DELAY);
+        if (i2s_channel_read(i2s_rx, i2s_buff, VAD_FRAME_SIZE * 4, &bytes_read, I2S_READ_TIMEOUT_MS) != ESP_OK) {
+            continue;
+        }
         int samples = bytes_read / 4;
+        if (samples == 0) continue;
         
         for (int j = 0; j < samples; j++) {
             int32_t s = i2s_buff[j] >> 11;
@@ -279,8 +277,11 @@ void vad_task(void *arg)
     ESP_LOGI(TAG, "VAD Listening...");
 
     while (1) {
-        i2s_read(I2S_PORT, i2s_buff, VAD_FRAME_SIZE * 4, &bytes_read, portMAX_DELAY);
+        if (i2s_channel_read(i2s_rx, i2s_buff, VAD_FRAME_SIZE * 4, &bytes_read, I2S_READ_TIMEOUT_MS) != ESP_OK) {
+            continue;
+        }
         int samples = bytes_read / 4;
+        if (samples == 0) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
         
         for (int i = 0; i < samples; i++) {
             int32_t s = i2s_buff[i] >> 11;
@@ -306,8 +307,11 @@ void vad_task(void *arg)
             
             // Record Loop
             while (recorded_samples < target_samples) {
-                 i2s_read(I2S_PORT, i2s_buff, VAD_FRAME_SIZE * 4, &bytes_read, portMAX_DELAY);
+                 if (i2s_channel_read(i2s_rx, i2s_buff, VAD_FRAME_SIZE * 4, &bytes_read, I2S_READ_TIMEOUT_MS) != ESP_OK) {
+                     continue;
+                 }
                  int chunk_samples = bytes_read / 4;
+                 if (chunk_samples == 0) continue;
                  
                  for (int i = 0; i < chunk_samples; i++) {
                     int32_t s = i2s_buff[i] >> 11;
@@ -328,8 +332,9 @@ void vad_task(void *arg)
             ESP_LOGI(TAG, "Recording Done. Uploading...");
             upload_audio_to_server(rec_buf, total_size);
             
-            // Cooldown
-            i2s_zero_dma_buffer(I2S_PORT);
+            // Cooldown: flush stale RX data by restarting the channel
+            i2s_channel_disable(i2s_rx);
+            i2s_channel_enable(i2s_rx);
             vTaskDelay(pdMS_TO_TICKS(1000));
             ESP_LOGI(TAG, "Resuming VAD...");
         }

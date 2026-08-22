@@ -2,15 +2,24 @@
 name:          "CHANGELOG.md"
 description:   "Project version history and change logs"
 created_date:  "2026/02/09 00:00:00"
-modified_date: "2026/06/18 10:00:00"
-project_version: "0.1.0"
-document_version: "1.0.0"
-agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash']
+modified_date: "2026/08/22 00:00:00"
+project_version: "0.1.1"
+document_version: "1.0.1"
+agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## [0.1.1] - 2026-08-22
+
+### Changed
+- **Toolchain Migration**: Migrated build environment from ESP-IDF 5.x to ESP-IDF v6.0.2 (stable release).
+- **I2S Driver Port**: Rewrote I2S init/read in `main.c` from the removed legacy driver (`driver/i2s.h`) to the new `esp_driver_i2s` standard-mode API (`driver/i2s_std.h`); DMA flush after upload now uses channel disable/enable instead of `i2s_zero_dma_buffer`.
+
+### Fixed
+- **Build Failure**: Resolved ESP-IDF configure error caused by outdated mbedtls submodule (missing `tf-psa-crypto`) by re-syncing submodules at tag `v6.0.2`.
 
 ## [0.1.0] - 2026-02-09 (Current Milestone)
 
