@@ -3,8 +3,8 @@ name:          "README.md"
 description:   "INMP441 Dataset Collector Node (ESP32) - COLLECTOR variant overview"
 created_date:  "2026/02/09 00:00:00"
 modified_date: "2026/08/22 00:00:00"
-project_version: "0.1.0"
-document_version: "1.0.0"
+project_version: "0.1.1"
+document_version: "1.0.1"
 agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 ---
 
@@ -16,9 +16,9 @@ agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 
 | 分支 | 定位 | 觸發方式 |
 |------|------|----------|
+| **feature01**（主線/預設分支） | 語音觸發節點 | RMS VAD 自動觸發 |
 | **feature01a**（本分支） | 資料收集工具 | 伺服器遙控 Start/Stop |
-| **feature01** | 語音觸發節點 | RMS VAD 自動觸發 |
-| **master** | esp-sr 喚醒詞實驗 | WakeNet（需 PSRAM） |
+| **waitfornewhardware** | esp-sr 喚醒詞實驗封存 | WakeNet（需 S/C 系列硬體） |
 
 ## 系統架構
 

@@ -3,8 +3,8 @@ name:          "SPEC.md"
 description:   "INMP441 Dataset Collector Node - system specification"
 created_date:  "2026/08/22 00:00:00"
 modified_date: "2026/08/22 00:00:00"
-project_version: "0.1.0"
-document_version: "1.0.0"
+project_version: "0.1.1"
+document_version: "1.0.1"
 agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 ---
 
