@@ -20,6 +20,8 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_http_client.h"
+#include "driver/gpio.h"
+#include "esp_timer.h"
 
 static const char *TAG = "RECORDER";
 
@@ -31,6 +33,10 @@ static const char *TAG = "RECORDER";
 /* Pins */
 #define I2S_WS_GPIO     CONFIG_I2S_WS_GPIO
 #define I2S_DIN_GPIO    CONFIG_I2S_DIN_GPIO
+
+/* LED Indicator (onboard LED on DevKit V1) */
+#define LED_GPIO         2
+#define LED_HEARTBEAT_MS 2000
 #define I2S_BCK_GPIO    CONFIG_I2S_BCK_GPIO
 
 /* Audio Constants */
@@ -214,6 +220,25 @@ static float calculate_rms(int16_t *data, int samples)
     return sqrtf(sum / samples);
 }
 
+/* LED Indicator Helpers */
+static void set_led_state(bool state)
+{
+    gpio_set_level(LED_GPIO, state ? 1 : 0);
+}
+
+static void led_heartbeat(void)
+{
+    static int64_t last = 0;
+    int64_t now = esp_timer_get_time();
+    if (now - last < (int64_t)LED_HEARTBEAT_MS * 1000) {
+        return;
+    }
+    last = now;
+    set_led_state(true);
+    vTaskDelay(pdMS_TO_TICKS(30));
+    set_led_state(false);
+}
+
 /* Main VAD Task */
 void vad_task(void *arg)
 {
@@ -242,6 +267,7 @@ void vad_task(void *arg)
     int valid_frames = 0;
 
     for (int i = 0; i < calib_frames; i++) {
+        led_heartbeat();
         if (i2s_channel_read(i2s_rx, i2s_buff, VAD_FRAME_SIZE * 4, &bytes_read, I2S_READ_TIMEOUT_MS) != ESP_OK) {
             continue;
         }
@@ -293,6 +319,7 @@ void vad_task(void *arg)
         float rms = calculate_rms(vad_buff, samples);
         
         if (rms > vad_threshold) {
+            set_led_state(true); // LED on: recording
             ESP_LOGI(TAG, ">>> Triggered! (RMS: %.1f) Recording...", rms);
             
             // Start Recording
@@ -330,6 +357,7 @@ void vad_task(void *arg)
             memcpy(rec_buf, &header, header_size);
             
             ESP_LOGI(TAG, "Recording Done. Uploading...");
+            set_led_state(false); // LED off: transmitting
             upload_audio_to_server(rec_buf, total_size);
             
             // Cooldown: flush stale RX data by restarting the channel
@@ -339,6 +367,7 @@ void vad_task(void *arg)
             ESP_LOGI(TAG, "Resuming VAD...");
         }
         
+        led_heartbeat();
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
@@ -346,7 +375,18 @@ void vad_task(void *arg)
 void app_main(void)
 {
     esp_task_wdt_deinit();
-    
+
+    // Init LED (GPIO2, onboard indicator) and ensure it starts off
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << LED_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    gpio_config(&io_conf);
+    set_led_state(false);
+
     // Init WiFi first so it connects while calibrating
     init_wifi();
     

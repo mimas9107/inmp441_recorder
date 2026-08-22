@@ -3,8 +3,8 @@ name:          "SPEC.md"
 description:   "Technical specifications and hardware/software requirements"
 created_date:  "2026/06/18 10:00:00"
 modified_date: "2026/08/22 00:00:00"
-project_version: "0.1.1"
-document_version: "1.0.1"
+project_version: "0.2.0"
+document_version: "1.0.2"
 agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 ---
 
@@ -34,3 +34,7 @@ agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 - **Sample Rate**: 16000 Hz
 - **Bit Depth**: 16-bit PCM
 - **Channels**: Mono
+
+## Indicator LED
+- **Pin**: GPIO2 (DevKit V1 onboard LED)
+- **States**: 2 s heartbeat = calibrating/idle; solid on = recording; off = uploading

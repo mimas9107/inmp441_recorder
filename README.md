@@ -3,8 +3,8 @@ name:          "README.md"
 description:   "INMP441 AI Voice Node (ESP32) project overview"
 created_date:  "2026/02/09 00:00:00"
 modified_date: "2026/08/22 00:00:00"
-project_version: "0.1.1"
-document_version: "1.0.1"
+project_version: "0.2.0"
+document_version: "1.0.2"
 agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 ---
 
@@ -89,3 +89,4 @@ agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 *   **Bit Depth**: 16-bit PCM (從 24-bit 數據位移 `>> 11` 轉換)
 *   **VAD 策略**: 動態能量門檻 (Noise Floor + Margin)
 *   **傳輸協議**: HTTP POST (application/octet-stream)
+*   **LED 指示** (GPIO2 板載 LED): 每 2 秒短閃＝待機/校準中（韌體存活）；恆亮＝錄音中；熄滅＝上傳中

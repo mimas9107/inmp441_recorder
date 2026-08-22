@@ -3,8 +3,8 @@ name:          "MEMOIR.md"
 description:   "Project design decisions and development history"
 created_date:  "2026/06/18 10:00:00"
 modified_date: "2026/08/22 00:00:00"
-project_version: "0.1.1"
-document_version: "1.0.1"
+project_version: "0.2.0"
+document_version: "1.0.2"
 agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 ---
 
@@ -15,6 +15,7 @@ agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 - **Recording Buffer**: Audio is buffered in RAM (96KB) to avoid SPIFFS/SD card latency issues which caused glitches in early versions.
 - **Auto-Calibration**: Implemented a 10-second noise floor calibration at boot to adapt to different environments.
 - **IDF v6 Migration (0.1.1)**: ESP-IDF v6.0 removed the legacy I2S driver (`driver/i2s.h`), so `main.c` was ported to `esp_driver_i2s` standard mode (`i2s_new_channel` + `I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG`, 32-bit mono-left). Post-upload DMA flush now uses channel disable/enable instead of the removed `i2s_zero_dma_buffer`. Chose stable tag `v6.0.2` over `master` to avoid a moving API target.
+- **LED Indicator (0.2.0)**: Adopted the GPIO2 onboard-LED recording indicator from the `feature01a` branch, extended with a standby heartbeat so a silent device is distinguishable from a dead one. Ported manually instead of cherry-picking because feature01a's main.c evolved into a different variant (web server/watchdog).
 
 ## Lessons Learned
 - ESP32-WROOM heap is very tight when running WiFi and I2S together.

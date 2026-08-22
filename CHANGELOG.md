@@ -3,14 +3,20 @@ name:          "CHANGELOG.md"
 description:   "Project version history and change logs"
 created_date:  "2026/02/09 00:00:00"
 modified_date: "2026/08/22 00:00:00"
-project_version: "0.1.1"
-document_version: "1.0.1"
+project_version: "0.2.0"
+document_version: "1.0.2"
 agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## [0.2.0] - 2026-08-22
+
+### Added
+- **LED Indicator**: Ported recording indicator from `feature01a` (GPIO2 onboard LED) and extended it with a standby heartbeat. States: heartbeat blink every 2 s while calibrating/idle (firmware alive), solid on while recording, off while uploading.
+- **Dependencies**: Added `esp_driver_gpio` and `esp_timer` to main component REQUIRES.
 
 ## [0.1.1] - 2026-08-22
 
