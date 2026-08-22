@@ -3,8 +3,8 @@ name:          "README.md"
 description:   "INMP441 AI Voice Node (ESP32) project overview"
 created_date:  "2026/02/09 00:00:00"
 modified_date: "2026/08/22 00:00:00"
-project_version: "0.2.0"
-document_version: "1.0.2"
+project_version: "0.2.1"
+document_version: "1.0.3"
 agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 ---
 
@@ -14,15 +14,18 @@ agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 
 ## 分支說明 (Branch Information)
 
-*   **feature01 (當前穩定分支)**: 
+*   **feature01 (主線/預設分支，當前穩定版)**: 
     *   採用輕量級 **RMS-based VAD** 偵測。
     *   具備 10 秒開機自動校正 (Auto-Calibration) 以適應環境底噪。
     *   偵測到語音後自動錄製 3 秒 (RAM Buffer)。
     *   透過 WiFi 將 WAV 檔 HTTP POST 到指定的 PC Server。
     *   適合記憶體有限的 ESP32-WROOM (無 PSRAM) 環境。
-*   **main (主分支)**: 
-    *   嘗試整合官方 `esp-sr` (WakeNet 喚醒詞) 的版本。
-    *   **注意**: 此版本在標準 ESP32-WROOM 上會因為記憶體不足 (Memory Exhausted) 而崩潰。若要運行此分支，建議使用具備 PSRAM 的 ESP32 模組 (如 WROVER 或 S3)。
+*   **feature01a (資料收集分支)**: 
+    *   移除 VAD，改為伺服器遙控的連續收集模式，用於訓練資料集蒐集。
+    *   詳見該分支的 README.md。
+*   **waitfornewhardware (封存分支)**: 
+    *   保存嘗試整合官方 `esp-sr` (WakeNet 喚醒詞) 的實驗版本（原 `master` 分支）。
+    *   **注意**: 此版本在標準 ESP32-WROOM 上會因為記憶體不足 (Memory Exhausted) 而崩潰。待取得具備 PSRAM 的 ESP32 模組 (如 WROVER 或 S3/C 系列) 後再繼續開發。
 
 ---
 

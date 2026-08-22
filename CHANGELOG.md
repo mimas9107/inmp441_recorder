@@ -3,14 +3,19 @@ name:          "CHANGELOG.md"
 description:   "Project version history and change logs"
 created_date:  "2026/02/09 00:00:00"
 modified_date: "2026/08/22 00:00:00"
-project_version: "0.2.0"
-document_version: "1.0.2"
+project_version: "0.2.1"
+document_version: "1.0.3"
 agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## [0.2.1] - 2026-08-22
+
+### Changed
+- **Repository Restructure**: Default branch moved from `master` to `feature01` (this branch is now the project mainline); the esp-sr experiment was archived to the `waitfornewhardware` branch and `master` was retired. Branch information in README updated accordingly.
 
 ## [0.2.0] - 2026-08-22
 

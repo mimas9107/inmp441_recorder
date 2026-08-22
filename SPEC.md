@@ -3,8 +3,8 @@ name:          "SPEC.md"
 description:   "Technical specifications and hardware/software requirements"
 created_date:  "2026/06/18 10:00:00"
 modified_date: "2026/08/22 00:00:00"
-project_version: "0.2.0"
-document_version: "1.0.2"
+project_version: "0.2.1"
+document_version: "1.0.3"
 agent_sign: ['human/mimas', 'gemini cli/gemini-2.0-flash', 'opencode/ox-alpha']
 ---
 
